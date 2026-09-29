@@ -62,13 +62,25 @@ function App() {
         }
       });
     } else {
-      // 4. Ya hay SKU activo -> El escaneo es un SERIAL
+      // 4. Ya hay SKU activo -> El escaneo es un SERIAL o MULTIPLES SERIALES (ej. desde un QR)
+      const scannedCodes = cleanCode.split(/[\s,]+/).filter(Boolean); // Separar por espacios, saltos de línea o comas
+      
       setItems((prevItems) => {
-        const isDuplicate = prevItems.some(item => item.serials.includes(cleanCode));
+        const newSerials = [];
+        let duplicateCount = 0;
         
-        if (isDuplicate) {
+        for (const code of scannedCodes) {
+           const isDuplicate = prevItems.some(item => item.serials.includes(code));
+           if (isDuplicate) {
+             duplicateCount++;
+           } else {
+             newSerials.push(code);
+           }
+        }
+        
+        if (newSerials.length === 0) {
           if (!isCameraActive) {
-             alert(`⚠️ El serial "${cleanCode}" ya fue contado previamente.`);
+             alert(`⚠️ ${duplicateCount > 1 ? "Todos los seriales" : "El serial"} ya fueron contados previamente.`);
           }
           return prevItems;
         }
@@ -77,8 +89,8 @@ function App() {
           if (item.id === currentActiveItem.id) {
             const updatedItem = {
               ...item,
-              qty: item.qty + 1,
-              serials: [...item.serials, cleanCode],
+              qty: item.qty + newSerials.length,
+              serials: [...item.serials, ...newSerials],
               timestamp: new Date().toISOString()
             };
             setActiveItem(updatedItem);
