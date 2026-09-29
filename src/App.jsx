@@ -287,6 +287,15 @@ function App() {
     XLSX.writeFile(workbook, `Conteo_Kardex_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
+  const clearInventory = () => {
+    if (items.length === 0) return;
+    if (window.confirm("⚠️ ¿Estás seguro de que deseas ELIMINAR todos los registros actuales y empezar una toma nueva? Asegúrate de haber descargado el Excel primero.")) {
+      setItems([]);
+      setActiveItem(null);
+      if (inputRef.current && !isCameraActive) inputRef.current.focus();
+    }
+  };
+
   return (
     <div className="app-container">
       <header className="header">
@@ -449,16 +458,23 @@ function App() {
       </section>
 
       <section className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <div className="list-header" style={{ marginBottom: '1rem' }}>
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div className="list-header" style={{ marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
             <ListChecks size={20} /> Resumen
           </h2>
           {items.length > 0 && (
-            <button 
-              onClick={exportToExcel}
-              style={{ background: '#10b981', color: 'white', border: 'none', padding: '0.5rem 1rem', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold', cursor: 'pointer' }}>
-              <Download size={18} /> Excel
-            </button>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button 
+                onClick={clearInventory}
+                style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '0.5rem 1rem', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold', cursor: 'pointer' }}>
+                <Trash2 size={18} /> Nueva Toma
+              </button>
+              <button 
+                onClick={exportToExcel}
+                style={{ background: '#10b981', color: 'white', border: 'none', padding: '0.5rem 1rem', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold', cursor: 'pointer' }}>
+                <Download size={18} /> Excel
+              </button>
+            </div>
           )}
         </div>
 
