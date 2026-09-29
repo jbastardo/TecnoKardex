@@ -53,6 +53,11 @@ function App() {
   }, [isCameraActive, activeItem]);
 
   const handleScannedCode = (newCode) => {
+    // Protección: Si la cámara es muy rápida y vuelve a leer el SKU, lo ignoramos para que no lo guarde como serial
+    if (activeItem && activeItem.code === newCode) {
+      return;
+    }
+
     if (!activeItem) {
       let existingSku = items.find(item => item.code === newCode && item.location === location);
       
@@ -74,7 +79,11 @@ function App() {
       const isDuplicate = items.some(item => item.serials.includes(newCode));
       
       if (isDuplicate) {
-        alert(`⚠️ El serial "${newCode}" ya fue contado previamente.`);
+        // Usamos un pequeño delay visual o ignoramos silenciosamente si es la cámara
+        // para no bombardear de alertas
+        if (!isCameraActive) {
+          alert(`⚠️ El serial "${newCode}" ya fue contado previamente.`);
+        }
         return;
       }
 
