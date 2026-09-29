@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ScanLine, Trash2, Package, ListChecks, MapPin, Camera, X, Plus, ChevronLeft, Download } from 'lucide-react';
+import { ScanLine, Trash2, Package, ListChecks, MapPin, Camera, X, Plus, CheckCircle2, Download } from 'lucide-react';
 import { useZxing } from 'react-zxing';
 import { BarcodeFormat, DecodeHintType } from '@zxing/library';
 import * as XLSX from 'xlsx';
@@ -13,7 +13,6 @@ function App() {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const inputRef = useRef(null);
 
-  // Configurar pistas para ZXing para asegurar máxima compatibilidad (Barras 1D y QR)
   const hints = new Map();
   const formats = [
     BarcodeFormat.QR_CODE,
@@ -28,11 +27,10 @@ function App() {
   ];
   hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
 
-  // Cámara Zxing optimizada
   const { ref: videoRef } = useZxing({
     paused: !isCameraActive,
     hints,
-    timeBetweenDecodingAttempts: 150, // Escaneo más rápido (150ms)
+    timeBetweenDecodingAttempts: 150,
     constraints: {
       video: {
         facingMode: "environment",
@@ -44,30 +42,23 @@ function App() {
     onDecodeResult(result) {
       const text = result.getText();
       handleScannedCode(text);
-      if (navigator.vibrate) {
-        navigator.vibrate(200);
-      }
+      if (navigator.vibrate) navigator.vibrate(200);
     },
   });
 
-  // Mantener foco en el input físico
   useEffect(() => {
     if (inputRef.current && !isCameraActive) {
       inputRef.current.focus();
     }
   }, [isCameraActive, activeItem]);
 
-  // Manejador central de escaneos
   const handleScannedCode = (newCode) => {
     if (!activeItem) {
-      // 1. No hay SKU activo, entonces este código es un SKU nuevo
       let existingSku = items.find(item => item.code === newCode && item.location === location);
       
       if (existingSku) {
-        // Ya existía en la lista, lo activamos
         setActiveItem(existingSku);
       } else {
-        // No existía, lo creamos
         const newItem = {
           id: Date.now().toString() + Math.random().toString(),
           code: newCode,
@@ -80,9 +71,6 @@ function App() {
         setActiveItem(newItem);
       }
     } else {
-      // 2. Ya hay un SKU activo. Este código que entra es un SERIAL.
-      
-      // Validar que el serial no exista en este SKU ni en ningún otro
       const isDuplicate = items.some(item => item.serials.includes(newCode));
       
       if (isDuplicate) {
@@ -90,7 +78,6 @@ function App() {
         return;
       }
 
-      // Si no es duplicado, lo agregamos al SKU activo
       setItems(prevItems => {
         return prevItems.map(item => {
           if (item.id === activeItem.id) {
@@ -100,7 +87,6 @@ function App() {
               serials: [...item.serials, newCode],
               timestamp: new Date().toISOString()
             };
-            // Actualizar el estado activo también para que la UI se refresque
             setActiveItem(updatedItem);
             return updatedItem;
           }
@@ -141,51 +127,27 @@ function App() {
 
   const removeItem = (id) => {
     setItems((prev) => prev.filter(item => item.id !== id));
-    if (activeItem && activeItem.id === id) {
-      setActiveItem(null);
-    }
+    if (activeItem && activeItem.id === id) setActiveItem(null);
     if (inputRef.current && !isCameraActive) inputRef.current.focus();
   };
 
   const exportToExcel = () => {
-    // Aplanar los datos para el Excel
     const exportData = [];
     
     items.forEach(item => {
       if (item.serials.length > 0) {
-        // Si tiene seriales, exportamos una fila por cada serial
         item.serials.forEach(serial => {
-          exportData.push({
-            Ubicacion: item.location,
-            SKU: item.code,
-            Serial: serial,
-            Cantidad: 1,
-            Fecha: new Date(item.timestamp).toLocaleString()
-          });
+          exportData.push({ Ubicacion: item.location, SKU: item.code, Serial: serial, Cantidad: 1, Fecha: new Date(item.timestamp).toLocaleString() });
         });
       } else {
-        // Si no tiene seriales, exportamos una fila con la cantidad total
-        exportData.push({
-          Ubicacion: item.location,
-          SKU: item.code,
-          Serial: "N/A",
-          Cantidad: item.qty,
-          Fecha: new Date(item.timestamp).toLocaleString()
-        });
+        exportData.push({ Ubicacion: item.location, SKU: item.code, Serial: "N/A", Cantidad: item.qty, Fecha: new Date(item.timestamp).toLocaleString() });
       }
     });
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Inventario");
-    
-    // Generar archivo
     XLSX.writeFile(workbook, `Conteo_Kardex_${new Date().toISOString().split('T')[0]}.xlsx`);
-  };
-
-  const formatDate = (isoString) => {
-    const d = new Date(isoString);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
 
   return (
@@ -198,14 +160,10 @@ function App() {
       {/* ZONA DE ESCANEO */}
       <section className="glass-panel" style={{ border: activeItem ? '2px solid var(--accent)' : '1px solid rgba(255, 255, 255, 0.1)' }}>
         
-        {/* Cabecera de la zona de escaneo */}
+        {/* Cabecera / Ubicación */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           
-          {activeItem ? (
-            <button onClick={() => setActiveItem(null)} className="btn-icon" style={{ background: 'var(--surface-light)', borderRadius: '0.5rem', padding: '0.5rem 1rem', width: 'auto', display: 'flex', gap: '0.5rem' }}>
-              <ChevronLeft size={18} /> Volver a SKUs
-            </button>
-          ) : (
+          {!activeItem ? (
             <div className="input-group" style={{ flex: 1 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <MapPin size={18} /> Ubicación Actual
@@ -218,6 +176,10 @@ function App() {
                 onChange={(e) => setLocation(e.target.value)}
               />
             </div>
+          ) : (
+             <div style={{ flex: 1, color: 'var(--text-secondary)' }}>
+                <small>Modo: Escaneo de Seriales</small>
+             </div>
           )}
 
           <button 
@@ -233,32 +195,35 @@ function App() {
           </button>
         </div>
 
-        {/* Info del SKU activo */}
-        {activeItem && (
-          <div style={{ background: 'rgba(59, 130, 246, 0.1)', padding: '1rem', borderRadius: '0.75rem', marginBottom: '1rem', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
-            <h3 style={{ margin: '0 0 0.5rem 0', color: '#93c5fd' }}>SKU: {activeItem.code}</h3>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>Total: {activeItem.qty}</span>
-              <button 
-                onClick={addQuantityWithoutSerial}
-                style={{ background: 'var(--accent)', color: 'white', border: 'none', padding: '0.5rem 1rem', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold' }}>
-                <Plus size={18} /> +1 Sin Serial
-              </button>
-            </div>
-          </div>
-        )}
-        
-        {/* Input Físico / Cámara */}
-        <div className="input-group">
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <ScanLine size={18} /> {activeItem ? 'Escanear SERIAL' : 'Escanear SKU'}
-          </label>
+        {/* Input Físico / Cámara Horizontal */}
+        <div className="input-group" style={{ marginBottom: '1rem' }}>
           
           {isCameraActive ? (
-            <div style={{ borderRadius: '0.75rem', overflow: 'hidden', border: '1px solid var(--accent)', position: 'relative' }}>
-              <video ref={videoRef} style={{ width: '100%', display: 'block' }} />
-              <div style={{ position: 'absolute', bottom: '10px', width: '100%', textAlign: 'center', color: 'white', textShadow: '0 2px 4px rgba(0,0,0,0.8)'}}>
-                <small>{activeItem ? 'Apunta al SERIAL del producto' : 'Apunta al código SKU (producto principal)'}</small>
+            <div style={{ 
+              borderRadius: '0.75rem', 
+              overflow: 'hidden', 
+              border: '2px solid var(--accent)', 
+              position: 'relative',
+              height: '140px', // Rectángulo horizontal
+              background: '#000'
+            }}>
+              <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              
+              {/* Línea Láser Roja */}
+              <div style={{
+                position: 'absolute',
+                top: '50%',
+                left: '10%',
+                right: '10%',
+                height: '2px',
+                background: 'rgba(239, 68, 68, 0.9)',
+                boxShadow: '0 0 8px rgba(239, 68, 68, 0.8)',
+                transform: 'translateY(-50%)',
+                zIndex: 10
+              }} />
+              
+              <div style={{ position: 'absolute', bottom: '6px', width: '100%', textAlign: 'center', color: 'white', textShadow: '0 2px 4px rgba(0,0,0,0.8)', zIndex: 10}}>
+                <small style={{ fontWeight: 'bold' }}>{activeItem ? 'Apunta al SERIAL' : 'Apunta al código SKU'}</small>
               </div>
             </div>
           ) : (
@@ -266,13 +231,50 @@ function App() {
               ref={inputRef}
               type="text"
               className="scanner-input"
-              placeholder={activeItem ? "Pistola: Lee el serial aquí..." : "Pistola: Lee el SKU aquí..."}
+              placeholder={activeItem ? "Pistola: Lee el SERIAL aquí..." : "Pistola: Lee el SKU aquí..."}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleScan}
             />
           )}
         </div>
+
+        {/* Info del SKU activo y botón Finalizar */}
+        {activeItem && (
+          <div style={{ background: 'rgba(59, 130, 246, 0.1)', padding: '1rem', borderRadius: '0.75rem', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
+            <h3 style={{ margin: '0 0 0.5rem 0', color: '#93c5fd' }}>SKU: {activeItem.code}</h3>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <span style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>Total: {activeItem.qty}</span>
+              <button 
+                onClick={addQuantityWithoutSerial}
+                style={{ background: 'rgba(255, 255, 255, 0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', padding: '0.5rem 1rem', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold' }}>
+                <Plus size={18} /> +1 Sin Serial
+              </button>
+            </div>
+            
+            <button 
+              onClick={() => setActiveItem(null)} 
+              style={{ 
+                width: '100%', 
+                background: '#10b981', 
+                color: 'white', 
+                border: 'none', 
+                padding: '0.75rem', 
+                borderRadius: '0.5rem', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                gap: '0.5rem', 
+                fontWeight: 'bold',
+                fontSize: '1.1rem',
+                cursor: 'pointer'
+              }}
+            >
+              <CheckCircle2 size={20} /> Terminar este SKU
+            </button>
+          </div>
+        )}
       </section>
 
       {/* LISTA DE REGISTROS */}
@@ -302,7 +304,7 @@ function App() {
                 <div className="item-details">
                   <span className="item-code" style={{ fontSize: '1.1rem' }}>SKU: {item.code}</span>
                   <span className="item-time" style={{ color: '#93c5fd' }}>
-                    <MapPin size={12} style={{ display: 'inline', marginRight: '4px' }}/>{item.location} • {formatDate(item.timestamp)}
+                    <MapPin size={12} style={{ display: 'inline', marginRight: '4px' }}/>{item.location} • {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
                   
                   {item.serials.length > 0 && (
