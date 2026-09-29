@@ -7,12 +7,18 @@ import './index.css';
 function App() {
   const [items, setItems] = useState([]);
   const [activeItem, setActiveItem] = useState(null);
+  const activeItemRef = useRef(null); // Ref para evitar bugs de estado asíncrono
   const [inputValue, setInputValue] = useState('');
   const [location, setLocation] = useState('Almacén Principal');
   const [isCameraActive, setIsCameraActive] = useState(false);
   
   const inputRef = useRef(null);
   const videoRef = useRef(null);
+
+  // Mantener el Ref sincronizado con el estado
+  useEffect(() => {
+    activeItemRef.current = activeItem;
+  }, [activeItem]);
 
   // Focus físico
   useEffect(() => {
@@ -22,23 +28,22 @@ function App() {
   }, [isCameraActive, activeItem]);
 
   // Manejador central de escaneos
-  const handleScannedCode = useCallback((newCode) => {
-    setItems((prevItems) => {
-      let activeItemEnCierre = null;
-      setItems(currentItems => currentItems);
+  const handleScannedCode = useCallback((rawCode) => {
+    // 1. Limpiar prefijos de metadata GS1 (AIM Symbology Identifiers) como ]C1, ]d2, etc.
+    // que el motor nativo del celular lee de códigos densos
+    const cleanCode = rawCode.replace(/^\][A-Za-z0-9]{2}/, '');
+    
+    const currentActiveItem = activeItemRef.current;
 
-      setActiveItem((currentActive) => {
-        activeItemEnCierre = currentActive;
-        return currentActive;
-      });
+    // 2. Si ya hay un SKU activo y la cámara dispara rápido el mismo código del SKU, lo ignoramos
+    if (currentActiveItem && currentActiveItem.code === cleanCode) {
+      return;
+    }
 
-      // Protección: Ignorar si la cámara lee el mismo SKU de nuevo en milisegundos
-      if (activeItemEnCierre && activeItemEnCierre.code === newCode) {
-        return prevItems;
-      }
-
-      if (!activeItemEnCierre) {
-        let existingSku = prevItems.find(item => item.code === newCode && item.location === location);
+    if (!currentActiveItem) {
+      // 3. No hay SKU activo -> El escaneo es un SKU
+      setItems((prevItems) => {
+        let existingSku = prevItems.find(item => item.code === cleanCode && item.location === location);
         
         if (existingSku) {
           setActiveItem(existingSku);
@@ -46,7 +51,7 @@ function App() {
         } else {
           const newItem = {
             id: Date.now().toString() + Math.random().toString(),
-            code: newCode,
+            code: cleanCode,
             qty: 0,
             location: location,
             serials: [],
@@ -55,22 +60,25 @@ function App() {
           setActiveItem(newItem);
           return [newItem, ...prevItems];
         }
-      } else {
-        const isDuplicate = prevItems.some(item => item.serials.includes(newCode));
+      });
+    } else {
+      // 4. Ya hay SKU activo -> El escaneo es un SERIAL
+      setItems((prevItems) => {
+        const isDuplicate = prevItems.some(item => item.serials.includes(cleanCode));
         
         if (isDuplicate) {
           if (!isCameraActive) {
-            alert(`⚠️ El serial "${newCode}" ya fue contado previamente.`);
+             alert(`⚠️ El serial "${cleanCode}" ya fue contado previamente.`);
           }
           return prevItems;
         }
 
         return prevItems.map(item => {
-          if (item.id === activeItemEnCierre.id) {
+          if (item.id === currentActiveItem.id) {
             const updatedItem = {
               ...item,
               qty: item.qty + 1,
-              serials: [...item.serials, newCode],
+              serials: [...item.serials, cleanCode],
               timestamp: new Date().toISOString()
             };
             setActiveItem(updatedItem);
@@ -78,8 +86,8 @@ function App() {
           }
           return item;
         });
-      }
-    });
+      });
+    }
   }, [location, isCameraActive]);
 
   // Motor de Escaneo Personalizado (Usa IA Nativa del Celular si está disponible)
@@ -112,7 +120,7 @@ function App() {
             if (navigator.vibrate) navigator.vibrate(100);
           };
 
-          // 1. INTENTAR CON EL MOTOR NATIVO (BarcodeDetector API - Súper Rápido, ideal para Code128)
+          // 1. INTENTAR CON EL MOTOR NATIVO
           if ('BarcodeDetector' in window) {
              const barcodeDetector = new window.BarcodeDetector({ 
                formats: ['code_128', 'ean_13', 'qr_code', 'code_39', 'data_matrix', 'itf'] 
@@ -128,17 +136,15 @@ function App() {
                } catch (e) {
                   // Ignorar errores de frame vacío
                }
-               // Repetir el loop
+               
                if (isScanning) {
-                  // Pausar unos milisegundos para no freír el CPU
                   setTimeout(() => {
                      animationFrameId = requestAnimationFrame(detectLoop);
-                  }, 150);
+                  }, 200); // 200ms delay para evitar escaneos ultra repetitivos
                }
              };
              detectLoop();
           } 
-          // 2. FALLBACK A ZXING SI EL NAVEGADOR NO SOPORTA EL MOTOR NATIVO
           else {
              const hints = new Map();
              hints.set(DecodeHintType.POSSIBLE_FORMATS, [
@@ -148,7 +154,7 @@ function App() {
                BarcodeFormat.CODE_39
              ]);
              codeReader = new BrowserMultiFormatReader(hints);
-             codeReader.timeBetweenDecodingAttempts = 150;
+             codeReader.timeBetweenDecodingAttempts = 200;
              
              codeReader.decodeFromVideoElement(videoRef.current, (result, err) => {
                if (result && isScanning) {
@@ -168,7 +174,6 @@ function App() {
       startScanner();
     }
 
-    // Cleanup function
     return () => {
       isScanning = false;
       if (stream) {
@@ -209,7 +214,32 @@ function App() {
         return item;
       });
     });
-    if (inputRef.current) inputRef.current.focus();
+    if (inputRef.current && !isCameraActive) inputRef.current.focus();
+  };
+
+  const setManualQuantity = () => {
+    if (!activeItem) return;
+    const qtyStr = prompt(`Ingresa la cantidad total contada para el SKU ${activeItem.code}:`);
+    if (qtyStr !== null && qtyStr.trim() !== '' && !isNaN(qtyStr)) {
+      const parsedQty = parseInt(qtyStr, 10);
+      if (parsedQty >= 0) {
+        setItems(prevItems => {
+          return prevItems.map(item => {
+            if (item.id === activeItem.id) {
+              const updatedItem = {
+                ...item,
+                qty: parsedQty, // Sobrescribe la cantidad
+                timestamp: new Date().toISOString()
+              };
+              setActiveItem(updatedItem);
+              return updatedItem;
+            }
+            return item;
+          });
+        });
+      }
+    }
+    if (inputRef.current && !isCameraActive) inputRef.current.focus();
   };
 
   const removeItem = (id) => {
@@ -334,13 +364,20 @@ function App() {
           <div style={{ background: 'rgba(59, 130, 246, 0.1)', padding: '1rem', borderRadius: '0.75rem', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
             <h3 style={{ margin: '0 0 0.5rem 0', color: '#93c5fd' }}>SKU: {activeItem.code}</h3>
             
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
               <span style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>Total: {activeItem.qty}</span>
-              <button 
-                onClick={addQuantityWithoutSerial}
-                style={{ background: 'rgba(255, 255, 255, 0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', padding: '0.5rem 1rem', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold' }}>
-                <Plus size={18} /> +1 Sin Serial
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button 
+                  onClick={addQuantityWithoutSerial}
+                  style={{ background: 'rgba(255, 255, 255, 0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', padding: '0.5rem 1rem', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold' }}>
+                  <Plus size={18} /> +1 Sin Serial
+                </button>
+                <button 
+                  onClick={setManualQuantity}
+                  style={{ background: 'rgba(255, 255, 255, 0.1)', color: '#93c5fd', border: '1px solid rgba(147, 197, 253, 0.3)', padding: '0.5rem 1rem', borderRadius: '0.5rem', fontWeight: 'bold' }}>
+                  Ingresar Cantidad
+                </button>
+              </div>
             </div>
             
             <button 
