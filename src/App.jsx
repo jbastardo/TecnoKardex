@@ -33,6 +33,14 @@ function App() {
     paused: !isCameraActive,
     hints,
     timeBetweenDecodingAttempts: 150, // Escaneo más rápido (150ms)
+    constraints: {
+      video: {
+        facingMode: "environment",
+        width: { min: 1280, ideal: 1920 },
+        height: { min: 720, ideal: 1080 },
+        advanced: [{ focusMode: "continuous" }]
+      }
+    },
     onDecodeResult(result) {
       const text = result.getText();
       handleScannedCode(text);
