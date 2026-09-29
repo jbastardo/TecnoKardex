@@ -5,15 +5,39 @@ import * as XLSX from 'xlsx';
 import './index.css';
 
 function App() {
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState(() => {
+    const saved = localStorage.getItem('tecnoKardexItems');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  });
+  
   const [activeItem, setActiveItem] = useState(null);
   const activeItemRef = useRef(null); // Ref para evitar bugs de estado asíncrono
   const [inputValue, setInputValue] = useState('');
-  const [location, setLocation] = useState('Almacén Principal');
+  
+  const [location, setLocation] = useState(() => {
+    return localStorage.getItem('tecnoKardexLocation') || 'Almacén Principal';
+  });
+  
   const [isCameraActive, setIsCameraActive] = useState(false);
   
   const inputRef = useRef(null);
   const videoRef = useRef(null);
+
+  // Auto-guardado en el navegador (Local Storage)
+  useEffect(() => {
+    localStorage.setItem('tecnoKardexItems', JSON.stringify(items));
+  }, [items]);
+
+  useEffect(() => {
+    localStorage.setItem('tecnoKardexLocation', location);
+  }, [location]);
 
   // Mantener el Ref sincronizado con el estado
   useEffect(() => {
