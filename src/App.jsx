@@ -1,23 +1,41 @@
 import { useState, useRef, useEffect } from 'react';
 import { ScanLine, Trash2, Package, ListChecks, MapPin, Camera, X, Plus, ChevronLeft, Download } from 'lucide-react';
 import { useZxing } from 'react-zxing';
+import { BarcodeFormat, DecodeHintType } from '@zxing/library';
 import * as XLSX from 'xlsx';
 import './index.css';
 
 function App() {
   const [items, setItems] = useState([]);
-  // activeItem es el SKU que se está trabajando. Puede ser nulo.
   const [activeItem, setActiveItem] = useState(null);
   const [inputValue, setInputValue] = useState('');
   const [location, setLocation] = useState('Almacén Principal');
   const [isCameraActive, setIsCameraActive] = useState(false);
   const inputRef = useRef(null);
 
-  // Cámara Zxing
+  // Configurar pistas para ZXing para asegurar máxima compatibilidad (Barras 1D y QR)
+  const hints = new Map();
+  const formats = [
+    BarcodeFormat.QR_CODE,
+    BarcodeFormat.DATA_MATRIX,
+    BarcodeFormat.CODE_128,
+    BarcodeFormat.CODE_39,
+    BarcodeFormat.EAN_13,
+    BarcodeFormat.EAN_8,
+    BarcodeFormat.UPC_A,
+    BarcodeFormat.UPC_E,
+    BarcodeFormat.ITF
+  ];
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
+
+  // Cámara Zxing optimizada
   const { ref: videoRef } = useZxing({
     paused: !isCameraActive,
+    hints,
+    timeBetweenDecodingAttempts: 150, // Escaneo más rápido (150ms)
     onDecodeResult(result) {
-      handleScannedCode(result.getText());
+      const text = result.getText();
+      handleScannedCode(text);
       if (navigator.vibrate) {
         navigator.vibrate(200);
       }
