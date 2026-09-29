@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ScanLine, Trash2, Package, ListChecks, MapPin, Camera, X, Plus, CheckCircle2, Download, Type } from 'lucide-react';
-import { Html5Qrcode } from 'html5-qrcode';
-import Tesseract from 'tesseract.js';
+import { ScanLine, Trash2, Package, ListChecks, MapPin, Camera, X, Plus, CheckCircle2, Download } from 'lucide-react';
+import { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } from '@zxing/library';
 import * as XLSX from 'xlsx';
 import './index.css';
 
@@ -11,30 +10,29 @@ function App() {
   const [inputValue, setInputValue] = useState('');
   const [location, setLocation] = useState('Almacén Principal');
   const [isCameraActive, setIsCameraActive] = useState(false);
-  const [isOcrLoading, setIsOcrLoading] = useState(false);
   
   const inputRef = useRef(null);
-  const ocrInputRef = useRef(null);
-  const html5QrCodeRef = useRef(null);
+  const videoRef = useRef(null);
 
+  // Focus físico
   useEffect(() => {
-    if (inputRef.current && !isCameraActive && !isOcrLoading) {
+    if (inputRef.current && !isCameraActive) {
       inputRef.current.focus();
     }
-  }, [isCameraActive, activeItem, isOcrLoading]);
+  }, [isCameraActive, activeItem]);
 
+  // Manejador central de escaneos
   const handleScannedCode = useCallback((newCode) => {
     setItems((prevItems) => {
       let activeItemEnCierre = null;
-      setItems(currentItems => {
-        return currentItems;
-      });
+      setItems(currentItems => currentItems);
 
       setActiveItem((currentActive) => {
         activeItemEnCierre = currentActive;
         return currentActive;
       });
 
+      // Protección: Ignorar si la cámara lee el mismo SKU de nuevo en milisegundos
       if (activeItemEnCierre && activeItemEnCierre.code === newCode) {
         return prevItems;
       }
@@ -84,40 +82,103 @@ function App() {
     });
   }, [location, isCameraActive]);
 
+  // Motor de Escaneo Personalizado (Usa IA Nativa del Celular si está disponible)
   useEffect(() => {
-    if (isCameraActive) {
-      html5QrCodeRef.current = new Html5Qrcode("reader");
-      
-      html5QrCodeRef.current.start(
-        { facingMode: "environment" },
-        {
-          fps: 15,
-          qrbox: { width: 300, height: 100 },
-          aspectRatio: 1.777778
-        },
-        (decodedText) => {
-          handleScannedCode(decodedText);
-          if (navigator.vibrate) navigator.vibrate(100);
-        },
-        (errorMessage) => {
+    let stream = null;
+    let animationFrameId = null;
+    let codeReader = null;
+    let isScanning = true;
+
+    const startScanner = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            facingMode: "environment", 
+            width: { ideal: 1920 }, 
+            height: { ideal: 1080 },
+            advanced: [{ focusMode: "continuous" }]
+          }
+        });
+
+        if (videoRef.current && isScanning) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.setAttribute("playsinline", true);
+          videoRef.current.play();
+
+          // Función para procesar cuando encuentra un código
+          const onDecode = (text) => {
+            if (!isScanning) return;
+            handleScannedCode(text);
+            if (navigator.vibrate) navigator.vibrate(100);
+          };
+
+          // 1. INTENTAR CON EL MOTOR NATIVO (BarcodeDetector API - Súper Rápido, ideal para Code128)
+          if ('BarcodeDetector' in window) {
+             const barcodeDetector = new window.BarcodeDetector({ 
+               formats: ['code_128', 'ean_13', 'qr_code', 'code_39', 'data_matrix', 'itf'] 
+             });
+             
+             const detectLoop = async () => {
+               if (!isScanning || !videoRef.current) return;
+               try {
+                  const barcodes = await barcodeDetector.detect(videoRef.current);
+                  if (barcodes.length > 0) {
+                     onDecode(barcodes[0].rawValue);
+                  }
+               } catch (e) {
+                  // Ignorar errores de frame vacío
+               }
+               // Repetir el loop
+               if (isScanning) {
+                  // Pausar unos milisegundos para no freír el CPU
+                  setTimeout(() => {
+                     animationFrameId = requestAnimationFrame(detectLoop);
+                  }, 150);
+               }
+             };
+             detectLoop();
+          } 
+          // 2. FALLBACK A ZXING SI EL NAVEGADOR NO SOPORTA EL MOTOR NATIVO
+          else {
+             const hints = new Map();
+             hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+               BarcodeFormat.CODE_128, 
+               BarcodeFormat.EAN_13, 
+               BarcodeFormat.QR_CODE,
+               BarcodeFormat.CODE_39
+             ]);
+             codeReader = new BrowserMultiFormatReader(hints);
+             codeReader.timeBetweenDecodingAttempts = 150;
+             
+             codeReader.decodeFromVideoElement(videoRef.current, (result, err) => {
+               if (result && isScanning) {
+                 onDecode(result.getText());
+               }
+             });
+          }
         }
-      ).catch((err) => {
-        console.error("Error al iniciar la cámara: ", err);
-        alert("No se pudo iniciar la cámara. Revisa los permisos.");
+      } catch (err) {
+        console.error("Error al iniciar cámara: ", err);
+        alert("No se pudo iniciar la cámara. Verifica los permisos.");
         setIsCameraActive(false);
-      });
-    } else {
-      if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
-        html5QrCodeRef.current.stop().then(() => {
-          html5QrCodeRef.current.clear();
-          html5QrCodeRef.current = null;
-        }).catch(err => console.error(err));
       }
+    };
+
+    if (isCameraActive) {
+      startScanner();
     }
 
+    // Cleanup function
     return () => {
-      if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
-        html5QrCodeRef.current.stop().then(() => html5QrCodeRef.current.clear()).catch(e => console.error(e));
+      isScanning = false;
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      if (codeReader) {
+        codeReader.reset();
       }
     };
   }, [isCameraActive, handleScannedCode]);
@@ -175,83 +236,12 @@ function App() {
     XLSX.writeFile(workbook, `Conteo_Kardex_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-  const handleOcrCapture = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    setIsOcrLoading(true);
-    
-    // Si la cámara estaba activa, la pausamos para ahorrar recursos
-    setIsCameraActive(false);
-
-    Tesseract.recognize(
-      file,
-      'eng', // Para seriales alfanuméricos el inglés es más preciso
-      { logger: m => console.log(m) }
-    ).then(({ data: { text } }) => {
-      setIsOcrLoading(false);
-      
-      // Intentar adivinar cuál es el serial de Hikvision (L + 8 dígitos)
-      const hikvisionMatch = text.match(/L\d{8}/i);
-      
-      // Buscar también la palabra que esté después de "Serial No." o "SN"
-      let guess = '';
-      if (hikvisionMatch) {
-        guess = hikvisionMatch[0].toUpperCase();
-      } else {
-        // Limpiar el texto y buscar palabras de 6 a 20 caracteres alfanuméricos
-        const words = text.split(/\s+/).filter(w => /^[A-Za-z0-9]{6,20}$/.test(w));
-        if (words.length > 0) {
-           // Tomamos la última palabra larga (suele ser el serial al final de la etiqueta)
-           guess = words[words.length - 1].toUpperCase();
-        }
-      }
-      
-      // Limpiamos el texto crudo para mostrarlo más amigable
-      const cleanText = text.replace(/\n\s*\n/g, '\n').trim();
-      
-      const promptText = `IA detectó este texto en la foto:\n\n${cleanText}\n\nCorrige o confirma el Serial abajo:`;
-      const userInput = prompt(promptText, guess);
-      
-      if (userInput && userInput.trim() !== '') {
-        handleScannedCode(userInput.trim().toUpperCase());
-      }
-      
-    }).catch(err => {
-      setIsOcrLoading(false);
-      alert('Error al leer la imagen. Intenta tomar la foto más de cerca.');
-      console.error(err);
-    });
-    
-    // Resetear el input para poder tomar la misma foto de nuevo si hace falta
-    e.target.value = null;
-  };
-
   return (
     <div className="app-container">
       <header className="header">
         <h1>TecnoKardex</h1>
         <p>Control de inventario profesional</p>
       </header>
-
-      {/* Input oculto para la cámara OCR nativa */}
-      <input 
-        type="file" 
-        accept="image/*" 
-        capture="environment" 
-        ref={ocrInputRef} 
-        style={{ display: 'none' }} 
-        onChange={handleOcrCapture} 
-      />
-
-      {/* Overlay de carga OCR */}
-      {isOcrLoading && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
-          <Type size={48} className="spin-animation" style={{ marginBottom: '1rem', color: 'var(--accent)' }} />
-          <h2>Analizando texto con IA...</h2>
-          <p>Extrayendo serial de la foto</p>
-        </div>
-      )}
 
       <section className="glass-panel" style={{ border: activeItem ? '2px solid var(--accent)' : '1px solid rgba(255, 255, 255, 0.1)' }}>
         
@@ -278,14 +268,6 @@ function App() {
 
           <div style={{ display: 'flex', gap: '0.5rem', marginLeft: '1rem' }}>
             <button 
-              onClick={() => ocrInputRef.current?.click()}
-              className="btn-icon" 
-              style={{ background: 'rgba(16, 185, 129, 0.2)', color: '#10b981' }}
-              title="Tomar foto y extraer texto (OCR)"
-            >
-              <Type size={20} />
-            </button>
-            <button 
               onClick={() => setIsCameraActive(!isCameraActive)}
               className="btn-icon" 
               style={{ 
@@ -305,12 +287,34 @@ function App() {
               borderRadius: '0.75rem', 
               overflow: 'hidden', 
               border: '2px solid var(--accent)', 
+              position: 'relative',
+              height: '140px', // Rectángulo horizontal perfecto (tipo pistola láser)
               background: '#000'
             }}>
-              <div id="reader" style={{ width: '100%', minHeight: '200px' }}></div>
+              <video 
+                ref={videoRef} 
+                style={{ 
+                  width: '100%', 
+                  height: '100%', 
+                  objectFit: 'cover' // Obliga al video a llenar el rectángulo apaisado sin distorsionarse
+                }} 
+              />
               
-              <div style={{ padding: '0.5rem', textAlign: 'center', color: 'white', background: '#0f172a'}}>
-                <small style={{ fontWeight: 'bold' }}>{activeItem ? 'Apunta al SERIAL (centrado en el cuadro)' : 'Apunta al SKU (centrado en el cuadro)'}</small>
+              {/* Láser Rojo Guía */}
+              <div style={{
+                position: 'absolute',
+                top: '50%',
+                left: '10%',
+                right: '10%',
+                height: '2px',
+                background: 'rgba(239, 68, 68, 0.9)',
+                boxShadow: '0 0 8px rgba(239, 68, 68, 0.8)',
+                transform: 'translateY(-50%)',
+                zIndex: 10
+              }} />
+              
+              <div style={{ position: 'absolute', bottom: '6px', width: '100%', textAlign: 'center', color: 'white', textShadow: '0 2px 4px rgba(0,0,0,0.8)', zIndex: 10}}>
+                <small style={{ fontWeight: 'bold' }}>{activeItem ? 'Alinea el SERIAL con la línea roja' : 'Alinea el SKU con la línea roja'}</small>
               </div>
             </div>
           ) : (
@@ -325,30 +329,6 @@ function App() {
             />
           )}
         </div>
-
-        {/* Botón de Ayuda OCR si la cámara está activa y falla */}
-        {isCameraActive && (
-          <button 
-            onClick={() => ocrInputRef.current?.click()} 
-            style={{ 
-              width: '100%', 
-              background: 'rgba(16, 185, 129, 0.1)', 
-              color: '#10b981', 
-              border: '1px solid rgba(16, 185, 129, 0.3)', 
-              padding: '0.75rem', 
-              borderRadius: '0.5rem', 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center',
-              gap: '0.5rem', 
-              fontWeight: 'bold',
-              marginBottom: '1rem',
-              cursor: 'pointer'
-            }}
-          >
-            <Type size={18} /> ¿No lee la barra? Tomar foto al texto (OCR)
-          </button>
-        )}
 
         {activeItem && (
           <div style={{ background: 'rgba(59, 130, 246, 0.1)', padding: '1rem', borderRadius: '0.75rem', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
@@ -433,15 +413,6 @@ function App() {
           </div>
         )}
       </section>
-
-      <style dangerouslySetInnerHTML={{__html: `
-        .spin-animation {
-          animation: spin 2s linear infinite;
-        }
-        @keyframes spin {
-          100% { transform: rotate(360deg); }
-        }
-      `}} />
     </div>
   );
 }
