@@ -10,13 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@zxing/library": "^0.21.3",
     "firebase": "^12.19.0",
+    "html5-qrcode": "^2.3.8",
     "lucide-react": "^1.48.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.4",
-    "react-zxing": "^2.1.2",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

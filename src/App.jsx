@@ -1,7 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { ScanLine, Trash2, Package, ListChecks, MapPin, Camera, X, Plus, CheckCircle2, Download } from 'lucide-react';
-import { useZxing } from 'react-zxing';
-import { BarcodeFormat, DecodeHintType } from '@zxing/library';
+import { Html5Qrcode } from 'html5-qrcode';
 import * as XLSX from 'xlsx';
 import './index.css';
 
@@ -11,85 +10,70 @@ function App() {
   const [inputValue, setInputValue] = useState('');
   const [location, setLocation] = useState('Almacén Principal');
   const [isCameraActive, setIsCameraActive] = useState(false);
+  
   const inputRef = useRef(null);
+  // Guardar un ref para el escáner para poder detenerlo bien
+  const html5QrCodeRef = useRef(null);
 
-  const hints = new Map();
-  const formats = [
-    BarcodeFormat.QR_CODE,
-    BarcodeFormat.DATA_MATRIX,
-    BarcodeFormat.CODE_128,
-    BarcodeFormat.CODE_39,
-    BarcodeFormat.EAN_13,
-    BarcodeFormat.EAN_8,
-    BarcodeFormat.UPC_A,
-    BarcodeFormat.UPC_E,
-    BarcodeFormat.ITF
-  ];
-  hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
-
-  const { ref: videoRef } = useZxing({
-    paused: !isCameraActive,
-    hints,
-    timeBetweenDecodingAttempts: 150,
-    constraints: {
-      video: {
-        facingMode: "environment",
-        width: { min: 1280, ideal: 1920 },
-        height: { min: 720, ideal: 1080 },
-        advanced: [{ focusMode: "continuous" }]
-      }
-    },
-    onDecodeResult(result) {
-      const text = result.getText();
-      handleScannedCode(text);
-      if (navigator.vibrate) navigator.vibrate(200);
-    },
-  });
-
+  // Focus físico
   useEffect(() => {
     if (inputRef.current && !isCameraActive) {
       inputRef.current.focus();
     }
   }, [isCameraActive, activeItem]);
 
-  const handleScannedCode = (newCode) => {
-    // Protección: Si la cámara es muy rápida y vuelve a leer el SKU, lo ignoramos para que no lo guarde como serial
-    if (activeItem && activeItem.code === newCode) {
-      return;
-    }
+  // Manejador central de escaneos
+  const handleScannedCode = useCallback((newCode) => {
+    setItems((prevItems) => {
+      // Función pura para calcular el nuevo estado basado en prevItems
+      let activeItemEnCierre = null;
+      setItems(currentItems => {
+        // En este bloque no podemos hacer el return de setItems directamente con otra llamada,
+        // pero podemos leer el estado actual. Mejor calculamos todo con prevItems.
+        return currentItems;
+      });
 
-    if (!activeItem) {
-      let existingSku = items.find(item => item.code === newCode && item.location === location);
-      
-      if (existingSku) {
-        setActiveItem(existingSku);
-      } else {
-        const newItem = {
-          id: Date.now().toString() + Math.random().toString(),
-          code: newCode,
-          qty: 0,
-          location: location,
-          serials: [],
-          timestamp: new Date().toISOString(),
-        };
-        setItems(prev => [newItem, ...prev]);
-        setActiveItem(newItem);
+      // Primero, obtenemos el activeItem actual
+      setActiveItem((currentActive) => {
+        activeItemEnCierre = currentActive;
+        return currentActive;
+      });
+
+      // Protección: Si la cámara lee el mismo SKU de nuevo
+      if (activeItemEnCierre && activeItemEnCierre.code === newCode) {
+        return prevItems;
       }
-    } else {
-      const isDuplicate = items.some(item => item.serials.includes(newCode));
-      
-      if (isDuplicate) {
-        // Usamos un pequeño delay visual o ignoramos silenciosamente si es la cámara
-        // para no bombardear de alertas
-        if (!isCameraActive) {
-          alert(`⚠️ El serial "${newCode}" ya fue contado previamente.`);
+
+      if (!activeItemEnCierre) {
+        let existingSku = prevItems.find(item => item.code === newCode && item.location === location);
+        
+        if (existingSku) {
+          setActiveItem(existingSku);
+          return prevItems;
+        } else {
+          const newItem = {
+            id: Date.now().toString() + Math.random().toString(),
+            code: newCode,
+            qty: 0,
+            location: location,
+            serials: [],
+            timestamp: new Date().toISOString(),
+          };
+          setActiveItem(newItem);
+          return [newItem, ...prevItems];
         }
-        return;
-      }
+      } else {
+        const isDuplicate = prevItems.some(item => item.serials.includes(newCode));
+        
+        if (isDuplicate) {
+          if (!isCameraActive) {
+            alert(`⚠️ El serial "${newCode}" ya fue contado previamente.`);
+          }
+          return prevItems;
+        }
 
-      setItems(prevItems => {
         return prevItems.map(item => {
-          if (item.id === activeItem.id) {
+          if (item.id === activeItemEnCierre.id) {
             const updatedItem = {
               ...item,
               qty: item.qty + 1,
@@ -101,9 +85,52 @@ function App() {
           }
           return item;
         });
+      }
+    });
+  }, [location, isCameraActive]);
+
+  // Lógica del motor HTML5 QrCode
+  useEffect(() => {
+    if (isCameraActive) {
+      // Inicializar el escáner en el div 'reader'
+      html5QrCodeRef.current = new Html5Qrcode("reader");
+      
+      html5QrCodeRef.current.start(
+        { facingMode: "environment" },
+        {
+          fps: 15,    // Escanea 15 veces por segundo (súper rápido)
+          qrbox: { width: 300, height: 100 }, // Rectángulo horizontal perfecto para Code128
+          aspectRatio: 1.777778 // Fuerza la cámara a 16:9 HD
+        },
+        (decodedText) => {
+          handleScannedCode(decodedText);
+          if (navigator.vibrate) navigator.vibrate(100);
+        },
+        (errorMessage) => {
+          // Ignorar errores de "no se detectó código en este frame"
+        }
+      ).catch((err) => {
+        console.error("Error al iniciar la cámara: ", err);
+        alert("No se pudo iniciar la cámara. Revisa los permisos.");
+        setIsCameraActive(false);
       });
+    } else {
+      // Detener y limpiar si se apaga la cámara
+      if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
+        html5QrCodeRef.current.stop().then(() => {
+          html5QrCodeRef.current.clear();
+          html5QrCodeRef.current = null;
+        }).catch(err => console.error(err));
+      }
     }
-  };
+
+    // Cleanup on unmount
+    return () => {
+      if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
+        html5QrCodeRef.current.stop().then(() => html5QrCodeRef.current.clear()).catch(e => console.error(e));
+      }
+    };
+  }, [isCameraActive, handleScannedCode]);
 
   const handleScan = (e) => {
     if (e.key === 'Enter' && inputValue.trim() !== '') {
@@ -142,7 +169,6 @@ function App() {
 
   const exportToExcel = () => {
     const exportData = [];
-    
     items.forEach(item => {
       if (item.serials.length > 0) {
         item.serials.forEach(serial => {
@@ -212,27 +238,13 @@ function App() {
               borderRadius: '0.75rem', 
               overflow: 'hidden', 
               border: '2px solid var(--accent)', 
-              position: 'relative',
-              height: '140px', // Rectángulo horizontal
               background: '#000'
             }}>
-              <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              {/* Contenedor oficial de html5-qrcode */}
+              <div id="reader" style={{ width: '100%', minHeight: '200px' }}></div>
               
-              {/* Línea Láser Roja */}
-              <div style={{
-                position: 'absolute',
-                top: '50%',
-                left: '10%',
-                right: '10%',
-                height: '2px',
-                background: 'rgba(239, 68, 68, 0.9)',
-                boxShadow: '0 0 8px rgba(239, 68, 68, 0.8)',
-                transform: 'translateY(-50%)',
-                zIndex: 10
-              }} />
-              
-              <div style={{ position: 'absolute', bottom: '6px', width: '100%', textAlign: 'center', color: 'white', textShadow: '0 2px 4px rgba(0,0,0,0.8)', zIndex: 10}}>
-                <small style={{ fontWeight: 'bold' }}>{activeItem ? 'Apunta al SERIAL' : 'Apunta al código SKU'}</small>
+              <div style={{ padding: '0.5rem', textAlign: 'center', color: 'white', background: '#0f172a'}}>
+                <small style={{ fontWeight: 'bold' }}>{activeItem ? 'Apunta al SERIAL (centrado en el cuadro)' : 'Apunta al SKU (centrado en el cuadro)'}</small>
               </div>
             </div>
           ) : (
