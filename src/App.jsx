@@ -242,6 +242,27 @@ function App() {
     if (inputRef.current && !isCameraActive) inputRef.current.focus();
   };
 
+  const removeSerial = (skuId, serialToRemove) => {
+    setItems(prevItems => {
+      return prevItems.map(item => {
+        if (item.id === skuId) {
+          const updatedItem = {
+            ...item,
+            qty: item.qty - 1,
+            serials: item.serials.filter(s => s !== serialToRemove),
+            timestamp: new Date().toISOString()
+          };
+          if (activeItemRef.current && activeItemRef.current.id === skuId) {
+            setActiveItem(updatedItem);
+          }
+          return updatedItem;
+        }
+        return item;
+      });
+    });
+    if (inputRef.current && !isCameraActive) inputRef.current.focus();
+  };
+
   const removeItem = (id) => {
     setItems((prev) => prev.filter(item => item.id !== id));
     if (activeItem && activeItem.id === id) setActiveItem(null);
@@ -379,6 +400,29 @@ function App() {
                 </button>
               </div>
             </div>
+
+            {/* Lista de Seriales del SKU Activo */}
+            {activeItem.serials.length > 0 && (
+              <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.5rem', borderRadius: '0.5rem', marginBottom: '1rem', maxHeight: '150px', overflowY: 'auto' }}>
+                <div style={{ fontSize: '0.9rem', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Últimos seriales escaneados:</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {/* Mostramos los últimos agregados primero */}
+                  {[...activeItem.serials].reverse().map(serial => (
+                    <div key={serial} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '0.5rem', borderRadius: '0.25rem' }}>
+                      <span style={{ fontSize: '0.9rem', fontFamily: 'monospace' }}>{serial}</span>
+                      <button 
+                        onClick={() => removeSerial(activeItem.id, serial)}
+                        className="btn-icon" 
+                        style={{ padding: '0.25rem', color: 'var(--danger)' }}
+                        title="Borrar este serial"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             
             <button 
               onClick={() => setActiveItem(null)} 
@@ -426,7 +470,20 @@ function App() {
         ) : (
           <div className="item-list" style={{ flex: 1, overflowY: 'auto' }}>
             {items.map((item) => (
-              <div key={item.id} className="item-card" style={{ borderLeft: activeItem?.id === item.id ? '4px solid var(--accent)' : 'none' }}>
+              <div 
+                key={item.id} 
+                className="item-card" 
+                style={{ 
+                  borderLeft: activeItem?.id === item.id ? '4px solid var(--accent)' : 'none',
+                  cursor: 'pointer'
+                }}
+                onClick={() => {
+                  if (!activeItem || activeItem.id !== item.id) {
+                    setActiveItem(item);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }
+                }}
+              >
                 <div className="item-details">
                   <span className="item-code" style={{ fontSize: '1.1rem' }}>SKU: {item.code}</span>
                   <span className="item-time" style={{ color: '#93c5fd' }}>
@@ -441,7 +498,7 @@ function App() {
                 </div>
                 <div className="item-actions">
                   <span className="qty-badge" style={{ fontSize: '1.2rem', padding: '0.5rem' }}>x{item.qty}</span>
-                  <button onClick={() => removeItem(item.id)} className="btn-icon" aria-label="Eliminar">
+                  <button onClick={(e) => { e.stopPropagation(); removeItem(item.id); }} className="btn-icon" aria-label="Eliminar">
                     <Trash2 size={18} />
                   </button>
                 </div>
