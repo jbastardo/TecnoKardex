@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ScanLine, Trash2, Package, ListChecks, MapPin, Camera, X, Plus, CheckCircle2, Download } from 'lucide-react';
+import { ScanLine, Trash2, Package, ListChecks, MapPin, Camera, X, Plus, CheckCircle2, Download, Type } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
+import Tesseract from 'tesseract.js';
 import * as XLSX from 'xlsx';
 import './index.css';
 
@@ -10,36 +11,30 @@ function App() {
   const [inputValue, setInputValue] = useState('');
   const [location, setLocation] = useState('Almacén Principal');
   const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isOcrLoading, setIsOcrLoading] = useState(false);
   
   const inputRef = useRef(null);
-  // Guardar un ref para el escáner para poder detenerlo bien
+  const ocrInputRef = useRef(null);
   const html5QrCodeRef = useRef(null);
 
-  // Focus físico
   useEffect(() => {
-    if (inputRef.current && !isCameraActive) {
+    if (inputRef.current && !isCameraActive && !isOcrLoading) {
       inputRef.current.focus();
     }
-  }, [isCameraActive, activeItem]);
+  }, [isCameraActive, activeItem, isOcrLoading]);
 
-  // Manejador central de escaneos
   const handleScannedCode = useCallback((newCode) => {
     setItems((prevItems) => {
-      // Función pura para calcular el nuevo estado basado en prevItems
       let activeItemEnCierre = null;
       setItems(currentItems => {
-        // En este bloque no podemos hacer el return de setItems directamente con otra llamada,
-        // pero podemos leer el estado actual. Mejor calculamos todo con prevItems.
         return currentItems;
       });
 
-      // Primero, obtenemos el activeItem actual
       setActiveItem((currentActive) => {
         activeItemEnCierre = currentActive;
         return currentActive;
       });
 
-      // Protección: Si la cámara lee el mismo SKU de nuevo
       if (activeItemEnCierre && activeItemEnCierre.code === newCode) {
         return prevItems;
       }
@@ -89,25 +84,22 @@ function App() {
     });
   }, [location, isCameraActive]);
 
-  // Lógica del motor HTML5 QrCode
   useEffect(() => {
     if (isCameraActive) {
-      // Inicializar el escáner en el div 'reader'
       html5QrCodeRef.current = new Html5Qrcode("reader");
       
       html5QrCodeRef.current.start(
         { facingMode: "environment" },
         {
-          fps: 15,    // Escanea 15 veces por segundo (súper rápido)
-          qrbox: { width: 300, height: 100 }, // Rectángulo horizontal perfecto para Code128
-          aspectRatio: 1.777778 // Fuerza la cámara a 16:9 HD
+          fps: 15,
+          qrbox: { width: 300, height: 100 },
+          aspectRatio: 1.777778
         },
         (decodedText) => {
           handleScannedCode(decodedText);
           if (navigator.vibrate) navigator.vibrate(100);
         },
         (errorMessage) => {
-          // Ignorar errores de "no se detectó código en este frame"
         }
       ).catch((err) => {
         console.error("Error al iniciar la cámara: ", err);
@@ -115,7 +107,6 @@ function App() {
         setIsCameraActive(false);
       });
     } else {
-      // Detener y limpiar si se apaga la cámara
       if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
         html5QrCodeRef.current.stop().then(() => {
           html5QrCodeRef.current.clear();
@@ -124,7 +115,6 @@ function App() {
       }
     }
 
-    // Cleanup on unmount
     return () => {
       if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
         html5QrCodeRef.current.stop().then(() => html5QrCodeRef.current.clear()).catch(e => console.error(e));
@@ -185,6 +175,58 @@ function App() {
     XLSX.writeFile(workbook, `Conteo_Kardex_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
+  const handleOcrCapture = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setIsOcrLoading(true);
+    
+    // Si la cámara estaba activa, la pausamos para ahorrar recursos
+    setIsCameraActive(false);
+
+    Tesseract.recognize(
+      file,
+      'eng', // Para seriales alfanuméricos el inglés es más preciso
+      { logger: m => console.log(m) }
+    ).then(({ data: { text } }) => {
+      setIsOcrLoading(false);
+      
+      // Intentar adivinar cuál es el serial de Hikvision (L + 8 dígitos)
+      const hikvisionMatch = text.match(/L\d{8}/i);
+      
+      // Buscar también la palabra que esté después de "Serial No." o "SN"
+      let guess = '';
+      if (hikvisionMatch) {
+        guess = hikvisionMatch[0].toUpperCase();
+      } else {
+        // Limpiar el texto y buscar palabras de 6 a 20 caracteres alfanuméricos
+        const words = text.split(/\s+/).filter(w => /^[A-Za-z0-9]{6,20}$/.test(w));
+        if (words.length > 0) {
+           // Tomamos la última palabra larga (suele ser el serial al final de la etiqueta)
+           guess = words[words.length - 1].toUpperCase();
+        }
+      }
+      
+      // Limpiamos el texto crudo para mostrarlo más amigable
+      const cleanText = text.replace(/\n\s*\n/g, '\n').trim();
+      
+      const promptText = `IA detectó este texto en la foto:\n\n${cleanText}\n\nCorrige o confirma el Serial abajo:`;
+      const userInput = prompt(promptText, guess);
+      
+      if (userInput && userInput.trim() !== '') {
+        handleScannedCode(userInput.trim().toUpperCase());
+      }
+      
+    }).catch(err => {
+      setIsOcrLoading(false);
+      alert('Error al leer la imagen. Intenta tomar la foto más de cerca.');
+      console.error(err);
+    });
+    
+    // Resetear el input para poder tomar la misma foto de nuevo si hace falta
+    e.target.value = null;
+  };
+
   return (
     <div className="app-container">
       <header className="header">
@@ -192,10 +234,27 @@ function App() {
         <p>Control de inventario profesional</p>
       </header>
 
-      {/* ZONA DE ESCANEO */}
+      {/* Input oculto para la cámara OCR nativa */}
+      <input 
+        type="file" 
+        accept="image/*" 
+        capture="environment" 
+        ref={ocrInputRef} 
+        style={{ display: 'none' }} 
+        onChange={handleOcrCapture} 
+      />
+
+      {/* Overlay de carga OCR */}
+      {isOcrLoading && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
+          <Type size={48} className="spin-animation" style={{ marginBottom: '1rem', color: 'var(--accent)' }} />
+          <h2>Analizando texto con IA...</h2>
+          <p>Extrayendo serial de la foto</p>
+        </div>
+      )}
+
       <section className="glass-panel" style={{ border: activeItem ? '2px solid var(--accent)' : '1px solid rgba(255, 255, 255, 0.1)' }}>
         
-        {/* Cabecera / Ubicación */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           
           {!activeItem ? (
@@ -217,20 +276,28 @@ function App() {
              </div>
           )}
 
-          <button 
-            onClick={() => setIsCameraActive(!isCameraActive)}
-            className="btn-icon" 
-            style={{ 
-              background: isCameraActive ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)', 
-              color: isCameraActive ? 'var(--danger)' : '#93c5fd',
-              marginLeft: '1rem'
-            }}
-          >
-            {isCameraActive ? <X size={20} /> : <Camera size={20} />}
-          </button>
+          <div style={{ display: 'flex', gap: '0.5rem', marginLeft: '1rem' }}>
+            <button 
+              onClick={() => ocrInputRef.current?.click()}
+              className="btn-icon" 
+              style={{ background: 'rgba(16, 185, 129, 0.2)', color: '#10b981' }}
+              title="Tomar foto y extraer texto (OCR)"
+            >
+              <Type size={20} />
+            </button>
+            <button 
+              onClick={() => setIsCameraActive(!isCameraActive)}
+              className="btn-icon" 
+              style={{ 
+                background: isCameraActive ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)', 
+                color: isCameraActive ? 'var(--danger)' : '#93c5fd'
+              }}
+            >
+              {isCameraActive ? <X size={20} /> : <Camera size={20} />}
+            </button>
+          </div>
         </div>
 
-        {/* Input Físico / Cámara Horizontal */}
         <div className="input-group" style={{ marginBottom: '1rem' }}>
           
           {isCameraActive ? (
@@ -240,7 +307,6 @@ function App() {
               border: '2px solid var(--accent)', 
               background: '#000'
             }}>
-              {/* Contenedor oficial de html5-qrcode */}
               <div id="reader" style={{ width: '100%', minHeight: '200px' }}></div>
               
               <div style={{ padding: '0.5rem', textAlign: 'center', color: 'white', background: '#0f172a'}}>
@@ -260,7 +326,30 @@ function App() {
           )}
         </div>
 
-        {/* Info del SKU activo y botón Finalizar */}
+        {/* Botón de Ayuda OCR si la cámara está activa y falla */}
+        {isCameraActive && (
+          <button 
+            onClick={() => ocrInputRef.current?.click()} 
+            style={{ 
+              width: '100%', 
+              background: 'rgba(16, 185, 129, 0.1)', 
+              color: '#10b981', 
+              border: '1px solid rgba(16, 185, 129, 0.3)', 
+              padding: '0.75rem', 
+              borderRadius: '0.5rem', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              gap: '0.5rem', 
+              fontWeight: 'bold',
+              marginBottom: '1rem',
+              cursor: 'pointer'
+            }}
+          >
+            <Type size={18} /> ¿No lee la barra? Tomar foto al texto (OCR)
+          </button>
+        )}
+
         {activeItem && (
           <div style={{ background: 'rgba(59, 130, 246, 0.1)', padding: '1rem', borderRadius: '0.75rem', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
             <h3 style={{ margin: '0 0 0.5rem 0', color: '#93c5fd' }}>SKU: {activeItem.code}</h3>
@@ -298,7 +387,6 @@ function App() {
         )}
       </section>
 
-      {/* LISTA DE REGISTROS */}
       <section className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <div className="list-header" style={{ marginBottom: '1rem' }}>
           <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -345,6 +433,15 @@ function App() {
           </div>
         )}
       </section>
+
+      <style dangerouslySetInnerHTML={{__html: `
+        .spin-animation {
+          animation: spin 2s linear infinite;
+        }
+        @keyframes spin {
+          100% { transform: rotate(360deg); }
+        }
+      `}} />
     </div>
   );
 }
